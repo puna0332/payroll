@@ -1,0 +1,24 @@
+{
+  "name": "asnova-payroll",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Nền tảng quản lý chấm công, phê duyệt, OT và bảng lương cho ASNOVA Việt Nam",
+  "workspaces": [
+    "packages/api",
+    "packages/web"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @asnova/api",
+    "dev:web": "npm run dev -w @asnova/web",
+    "dev": "npm run dev:api & npm run dev:web",
+    "build:api": "npm run build -w @asnova/api",
+    "build:web": "npm run build -w @asnova/web",
+    "build": "npm run build:api && npm run build:web",
+    "db:migrate": "npm run db:migrate -w @asnova/api",
+    "db:generate": "npm run db:generate -w @asnova/api",
+    "db:studio": "npm run db:studio -w @asnova/api"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

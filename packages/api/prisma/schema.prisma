@@ -1,0 +1,607 @@
+// ============================================================
+// Prisma Schema — Asnova Payroll System
+// Full database schema for payroll, attendance, OT, insurance,
+// tax, leave, and audit tracking.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────
+
+enum ScheduleType {
+  OFFICE
+  SIX_DAY
+}
+
+enum EmploymentType {
+  FT // Full-time
+  PT // Part-time
+  P  // Probation
+  M  // Management
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PeriodStatus {
+  OPEN
+  SCHEDULED
+  READY
+  CLOSING
+  CLOSED
+  ERROR
+}
+
+enum AttendanceSource {
+  LARK_SYNC
+  MANUAL
+}
+
+enum ApprovalStatus {
+  APPROVED
+  REJECTED
+  PENDING
+  CANCELLED
+}
+
+enum LeaveTypeBucket {
+  ANNUAL
+  UNPAID
+  BENEFIT
+  REMOTE
+  COMP_LEAVE
+  CORRECTION
+  OT
+  CHANGE
+}
+
+enum PayslipStatus {
+  DRAFT
+  CONFIRMED
+  PAID
+}
+
+enum DayType {
+  WORKDAY
+  SATURDAY
+  SUNDAY
+  HOLIDAY
+  COMPANY_TRIP
+}
+
+enum SyncDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum SyncStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum AuditAction {
+  INSERT
+  UPDATE
+  DELETE
+}
+
+enum CloseStepStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+// ─── Models ─────────────────────────────────────────────────
+
+/// Nhân viên — Employee master data
+model Employee {
+  id             String         @id @default(uuid()) @db.Uuid
+  userId         String         @unique @map("user_id")
+  employeeCode   String?        @unique @map("employee_code")
+  larkRecordId   String?        @unique @map("lark_record_id")
+  fullName       String         @map("full_name")
+  department     String
+  position       String
+  scheduleType   ScheduleType   @map("schedule_type")
+  employmentType EmploymentType @map("employment_type")
+  joinDate       DateTime?      @map("join_date") @db.Date
+  leaveDate      DateTime?      @map("leave_date") @db.Date
+  status         EmployeeStatus @default(ACTIVE)
+  email          String?
+  mobile         String?
+  openId         String?        @map("open_id")
+  unionId        String?        @map("union_id")
+  larkMetadata   Json?          @map("lark_metadata")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  dailyAttendances  DailyAttendance[]
+  approvalRecords   ApprovalRecord[]
+  monthlyAttendances MonthlyAttendance[]
+  otDetails         OtDetail[]
+  otMonthlies       OtMonthly[]
+  salaryPolicies    SalaryPolicy[]
+  insurancePolicies InsurancePolicy[]
+  taxPolicies       TaxPolicy[]
+  payslips          Payslip[]
+  leaveBalances     LeaveBalance[]
+
+  @@map("employees")
+}
+
+/// Kỳ lương — Payroll period (monthly)
+model PayrollPeriod {
+  id           String       @id @default(uuid()) @db.Uuid
+  monthKey     String       @unique @map("month_key")
+  label        String
+  periodStart  DateTime     @map("period_start") @db.Date
+  periodEnd    DateTime     @map("period_end") @db.Date
+  status       PeriodStatus @default(OPEN)
+  autoClose    Boolean      @default(false) @map("auto_close")
+  closeAt      DateTime?    @map("close_at")
+  larkRecordId String?      @map("lark_record_id")
+  larkSheetUrl      String?    @map("lark_sheet_url")
+  larkSheetToken    String?    @map("lark_sheet_token")
+  larkOtSheetUrl    String?    @map("lark_ot_sheet_url")
+  larkOtSheetToken  String?    @map("lark_ot_sheet_token")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  monthlyAttendances MonthlyAttendance[]
+  otDetails          OtDetail[]
+  otMonthlies        OtMonthly[]
+  payslips           Payslip[]
+  closeProcessLogs   CloseProcessLog[]
+
+  @@map("payroll_periods")
+}
+
+/// Chấm công hàng ngày — Daily attendance records
+model DailyAttendance {
+  id                  String           @id @default(uuid()) @db.Uuid
+  employeeId          String           @map("employee_id") @db.Uuid
+  attendanceDate      DateTime         @map("attendance_date") @db.Date
+  checkIn             DateTime?        @map("check_in")
+  checkOut            DateTime?        @map("check_out")
+  workHours           Decimal          @default(0) @map("work_hours") @db.Decimal(5, 2)
+  rawLateHours        Decimal          @default(0) @map("raw_late_hours") @db.Decimal(5, 2)
+  rawEarlyHours       Decimal          @default(0) @map("raw_early_hours") @db.Decimal(5, 2)
+  lateHours           Decimal          @default(0) @map("late_hours") @db.Decimal(5, 2)
+  earlyHours          Decimal          @default(0) @map("early_hours") @db.Decimal(5, 2)
+  otHoursPreliminary  Decimal          @default(0) @map("ot_hours_preliminary") @db.Decimal(5, 2)
+  missingHours        Decimal          @default(0) @map("missing_hours") @db.Decimal(5, 2)
+  conclusion          String?
+  source              AttendanceSource
+  idempotencyKey      String           @unique @map("idempotency_key")
+  larkRecordId        String?          @map("lark_record_id")
+  rawData             Json?            @map("raw_data")
+  syncedAt            DateTime?        @map("synced_at")
+  createdAt           DateTime         @default(now()) @map("created_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, attendanceDate])
+  @@map("daily_attendances")
+}
+
+/// Đơn phê duyệt — Approval records (leave, OT, etc.)
+model ApprovalRecord {
+  id              String          @id @default(uuid()) @db.Uuid
+  employeeId      String          @map("employee_id") @db.Uuid
+  instanceCode    String          @unique @map("instance_code")
+  approvalCode    String?         @map("approval_code")    // Lark approval definition code
+  serialNumber    String?         @map("serial_number")     // Lark serial number (human-readable)
+  approvalType    String          @map("approval_type")
+  leaveType       String?         @map("leave_type")
+  leaveTypeBucket LeaveTypeBucket? @map("leave_type_bucket")
+  status          ApprovalStatus  @default(PENDING)
+  applyDate       DateTime?       @map("apply_date") @db.Date
+  approvedHours   Decimal         @default(0) @map("approved_hours") @db.Decimal(5, 2)
+  approvedDays    Decimal         @default(0) @map("approved_days") @db.Decimal(5, 2)
+  startTime       DateTime?       @map("start_time")
+  endTime         DateTime?       @map("end_time")
+  submissionPolicyOverride Boolean @default(false) @map("submission_policy_override")
+  larkRecordId    String?         @map("lark_record_id")
+  rawData         Json?           @map("raw_data")
+  syncedAt        DateTime?       @map("synced_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  // Relations
+  employee  Employee   @relation(fields: [employeeId], references: [id])
+  otDetails OtDetail[]
+
+  @@index([approvalCode])
+  @@index([status])
+  @@index([startTime])
+  @@map("approval_records")
+}
+
+/// Chấm công tổng hợp tháng — Monthly attendance summary
+model MonthlyAttendance {
+  id                String   @id @default(uuid()) @db.Uuid
+  employeeId        String   @map("employee_id") @db.Uuid
+  periodId          String   @map("period_id") @db.Uuid
+  standardDays      Decimal  @map("standard_days") @db.Decimal(5, 2)
+  rawActualDays     Decimal  @default(0) @map("raw_actual_days") @db.Decimal(5, 2)
+  paidCreditHours   Decimal  @default(0) @map("paid_credit_hours") @db.Decimal(5, 2)
+  unpaidHours       Decimal  @default(0) @map("unpaid_hours") @db.Decimal(5, 2)
+  actualDays        Decimal  @default(0) @map("actual_days") @db.Decimal(5, 2)
+  absentDays        Decimal  @default(0) @map("absent_days") @db.Decimal(5, 2)
+  workHours         Decimal  @default(0) @map("work_hours") @db.Decimal(7, 2)
+  lateHoursBeforeLeave Decimal @default(0) @map("late_hours_before_leave") @db.Decimal(5, 2)
+  earlyHoursBeforeLeave Decimal @default(0) @map("early_hours_before_leave") @db.Decimal(5, 2)
+  lateEarlyLeaveDeductedHours Decimal @default(0) @map("late_early_leave_deducted_hours") @db.Decimal(5, 2)
+  lateHours         Decimal  @default(0) @map("late_hours") @db.Decimal(5, 2)
+  earlyHours        Decimal  @default(0) @map("early_hours") @db.Decimal(5, 2)
+  annualLeaveHours  Decimal  @default(0) @map("annual_leave_hours") @db.Decimal(5, 2)
+  benefitLeaveHours Decimal  @default(0) @map("benefit_leave_hours") @db.Decimal(5, 2)
+  remoteHours       Decimal  @default(0) @map("remote_hours") @db.Decimal(5, 2)
+  compLeaveHours    Decimal  @default(0) @map("comp_leave_hours") @db.Decimal(5, 2)
+  correctionHours   Decimal  @default(0) @map("correction_hours") @db.Decimal(5, 2)
+  larkRecordId      String?  @map("lark_record_id")
+  calculatedAt      DateTime? @map("calculated_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee      @relation(fields: [employeeId], references: [id])
+  period   PayrollPeriod @relation(fields: [periodId], references: [id])
+
+  @@unique([employeeId, periodId])
+  @@map("monthly_attendances")
+}
+
+/// Chi tiết OT — OT detail records per day/bucket
+model OtDetail {
+  id             String    @id @default(uuid()) @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  approvalId     String?   @map("approval_id") @db.Uuid
+  periodId       String    @map("period_id") @db.Uuid
+  workDate       DateTime  @map("work_date") @db.Date
+  bucket         String
+  rate           Decimal   @db.Decimal(4, 2)
+  hours          Decimal   @default(0) @db.Decimal(5, 2)
+  validHours     Decimal   @default(0) @map("valid_hours") @db.Decimal(5, 2)
+  amount         Decimal   @default(0) @db.Decimal(15, 2)
+  dayType        String    @map("day_type")
+  startTime      DateTime? @map("start_time")
+  endTime        DateTime? @map("end_time")
+  idempotencyKey String    @unique @map("idempotency_key")
+  larkRecordId   String?   @map("lark_record_id")
+  calculatedAt   DateTime? @map("calculated_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  employee Employee       @relation(fields: [employeeId], references: [id])
+  approval ApprovalRecord? @relation(fields: [approvalId], references: [id])
+  period   PayrollPeriod  @relation(fields: [periodId], references: [id])
+
+  @@map("ot_details")
+}
+
+/// Tổng hợp OT tháng — Monthly OT summary
+model OtMonthly {
+  id              String   @id @default(uuid()) @db.Uuid
+  employeeId      String   @map("employee_id") @db.Uuid
+  periodId        String   @map("period_id") @db.Uuid
+  totalHours      Decimal  @default(0) @map("total_hours") @db.Decimal(7, 2)
+  totalAmount     Decimal  @default(0) @map("total_amount") @db.Decimal(15, 2)
+  bucketBreakdown Json?    @map("bucket_breakdown")
+  overDailyDates  Json?    @map("over_daily_dates")
+  overMonthlyLimit Boolean @default(false) @map("over_monthly_limit")
+  larkRecordId    String?  @map("lark_record_id")
+  calculatedAt    DateTime? @map("calculated_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee      @relation(fields: [employeeId], references: [id])
+  period   PayrollPeriod @relation(fields: [periodId], references: [id])
+
+  @@unique([employeeId, periodId])
+  @@map("ot_monthlies")
+}
+
+/// Chính sách lương — Salary policy per employee per period
+model SalaryPolicy {
+  id                   String   @id @default(uuid()) @db.Uuid
+  employeeId           String   @map("employee_id") @db.Uuid
+  periodKey            String   @map("period_key")
+  isCurrent            Boolean  @default(true) @map("is_current")
+  offerSalary          Decimal  @default(0) @map("offer_salary") @db.Decimal(15, 2)
+  ratio                Decimal  @default(1) @db.Decimal(5, 2)
+  baseSalary           Decimal  @default(0) @map("base_salary") @db.Decimal(15, 2)
+  rankAllowance        Decimal  @default(0) @map("rank_allowance") @db.Decimal(15, 2)
+  bpqlAllowance        Decimal  @default(0) @map("bpql_allowance") @db.Decimal(15, 2)
+  salesAllowance       Decimal  @default(0) @map("sales_allowance") @db.Decimal(15, 2)
+  technicalAllowance   Decimal  @default(0) @map("technical_allowance") @db.Decimal(15, 2)
+  languageAllowance    Decimal  @default(0) @map("language_allowance") @db.Decimal(15, 2)
+  housingAllowance     Decimal  @default(0) @map("housing_allowance") @db.Decimal(15, 2)
+  transportAllowance   Decimal  @default(0) @map("transport_allowance") @db.Decimal(15, 2)
+  mealAllowance        Decimal  @default(0) @map("meal_allowance") @db.Decimal(15, 2)
+  phoneAllowance       Decimal  @default(0) @map("phone_allowance") @db.Decimal(15, 2)
+  attendanceAllowance  Decimal  @default(0) @map("attendance_allowance") @db.Decimal(15, 2)
+  dailyRate            Decimal  @default(0) @map("daily_rate") @db.Decimal(15, 2)
+  hourlyRate           Decimal  @default(0) @map("hourly_rate") @db.Decimal(15, 2)
+  larkRecordId         String?  @map("lark_record_id")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, periodKey])
+  @@map("salary_policies")
+}
+
+/// Chính sách bảo hiểm — Insurance policy per employee per period
+model InsurancePolicy {
+  id              String   @id @default(uuid()) @db.Uuid
+  employeeId      String   @map("employee_id") @db.Uuid
+  periodKey       String   @map("period_key")
+  isCurrent       Boolean  @default(true) @map("is_current")
+  insuranceBasis  Decimal  @default(0) @map("insurance_basis") @db.Decimal(15, 2)
+  bhxhEmployee    Decimal  @default(0) @map("bhxh_employee") @db.Decimal(15, 2)
+  bhytEmployee    Decimal  @default(0) @map("bhyt_employee") @db.Decimal(15, 2)
+  bhtnEmployee    Decimal  @default(0) @map("bhtn_employee") @db.Decimal(15, 2)
+  totalEmployee   Decimal  @default(0) @map("total_employee") @db.Decimal(15, 2)
+  bhxhEmployer    Decimal  @default(0) @map("bhxh_employer") @db.Decimal(15, 2)
+  bhytEmployer    Decimal  @default(0) @map("bhyt_employer") @db.Decimal(15, 2)
+  bhtnEmployer    Decimal  @default(0) @map("bhtn_employer") @db.Decimal(15, 2)
+  totalEmployer   Decimal  @default(0) @map("total_employer") @db.Decimal(15, 2)
+  grandTotal      Decimal  @default(0) @map("grand_total") @db.Decimal(15, 2)
+  larkRecordId    String?  @map("lark_record_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, periodKey])
+  @@map("insurance_policies")
+}
+
+/// Chính sách thuế TNCN — Tax policy per employee per period
+model TaxPolicy {
+  id                  String   @id @default(uuid()) @db.Uuid
+  employeeId          String   @map("employee_id") @db.Uuid
+  periodKey           String   @map("period_key")
+  isCurrent           Boolean  @default(true) @map("is_current")
+  personalDeduction   Decimal  @default(11000000) @map("personal_deduction") @db.Decimal(15, 2)
+  dependents          Int      @default(0)
+  dependentDeduction  Decimal  @default(0) @map("dependent_deduction") @db.Decimal(15, 2)
+  taxCode             String?  @map("tax_code")
+  larkRecordId        String?  @map("lark_record_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, periodKey])
+  @@map("tax_policies")
+}
+
+/// Phiếu lương — Payslip per employee per period
+model Payslip {
+  id                  String       @id @default(uuid()) @db.Uuid
+  employeeId          String       @map("employee_id") @db.Uuid
+  periodId            String       @map("period_id") @db.Uuid
+  standardDays        Decimal      @default(0) @map("standard_days") @db.Decimal(5, 2)
+  actualDays          Decimal      @default(0) @map("actual_days") @db.Decimal(5, 2)
+  workRatio           Decimal      @default(0) @map("work_ratio") @db.Decimal(5, 4)
+  baseSalary          Decimal      @default(0) @map("base_salary") @db.Decimal(15, 2)
+  actualSalary        Decimal      @default(0) @map("actual_salary") @db.Decimal(15, 2)
+  allowancesTotal     Decimal      @default(0) @map("allowances_total") @db.Decimal(15, 2)
+  otTotalHours        Decimal      @default(0) @map("ot_total_hours") @db.Decimal(7, 2)
+  otTotalAmount       Decimal      @default(0) @map("ot_total_amount") @db.Decimal(15, 2)
+  otBucketBreakdown   Json?        @map("ot_bucket_breakdown")
+  lateDeduction       Decimal      @default(0) @map("late_deduction") @db.Decimal(15, 2)
+  grossIncome         Decimal      @default(0) @map("gross_income") @db.Decimal(15, 2)
+  insuranceEmployee   Decimal      @default(0) @map("insurance_employee") @db.Decimal(15, 2)
+  insuranceEmployer   Decimal      @default(0) @map("insurance_employer") @db.Decimal(15, 2)
+  taxExempt           Decimal      @default(0) @map("tax_exempt") @db.Decimal(15, 2)
+  taxableIncome       Decimal      @default(0) @map("taxable_income") @db.Decimal(15, 2)
+  pitAmount           Decimal      @default(0) @map("pit_amount") @db.Decimal(15, 2)
+  afterTaxAdjustment  Decimal      @default(0) @map("after_tax_adjustment") @db.Decimal(15, 2)
+  unionFee            Decimal      @default(0) @map("union_fee") @db.Decimal(15, 2)
+  netSalary           Decimal      @default(0) @map("net_salary") @db.Decimal(15, 2)
+  status              PayslipStatus @default(DRAFT)
+  fullBreakdown       Json?        @map("full_breakdown")
+  larkRecordId        String?      @map("lark_record_id")
+  calculatedAt        DateTime?    @map("calculated_at")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee      @relation(fields: [employeeId], references: [id])
+  period   PayrollPeriod @relation(fields: [periodId], references: [id])
+
+  @@unique([employeeId, periodId])
+  @@map("payslips")
+}
+
+/// Số dư phép — Leave balance per employee per month
+model LeaveBalance {
+  id              String   @id @default(uuid()) @db.Uuid
+  employeeId      String   @map("employee_id") @db.Uuid
+  monthKey        String   @map("month_key")
+  opening         Decimal  @default(0) @db.Decimal(5, 2)
+  accrued         Decimal  @default(0) @db.Decimal(5, 2)
+  used            Decimal  @default(0) @db.Decimal(5, 2)
+  lateEarlyUsed   Decimal  @default(0) @map("late_early_used") @db.Decimal(5, 2)
+  adjustment      Decimal  @default(0) @db.Decimal(5, 2)
+  seniorityBonus  Decimal  @default(0) @map("seniority_bonus") @db.Decimal(5, 2)
+  closing         Decimal  @default(0) @db.Decimal(5, 2)
+  larkRecordId    String?  @map("lark_record_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, monthKey])
+  @@map("leave_balances")
+}
+
+/// Quy tắc nghỉ phép / lịch — Leave & calendar rules per month/schedule
+model LeaveRule {
+  id           String       @id @default(uuid()) @db.Uuid
+  monthKey     String       @map("month_key")
+  scheduleType ScheduleType @map("schedule_type")
+  daysInMonth  Int          @map("days_in_month")
+  saturdays    Int          @default(0)
+  sundays      Int          @default(0)
+  holidays     Int          @default(0)
+  standardDays Int          @map("standard_days")
+  workingDays  Int          @map("working_days")
+  larkRecordId String?      @map("lark_record_id")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  @@unique([monthKey, scheduleType])
+  @@map("leave_rules")
+}
+
+/// Lịch làm việc — Work calendar
+model WorkCalendar {
+  id              String   @id @default(uuid()) @db.Uuid
+  calendarDate    DateTime @unique @map("calendar_date") @db.Date
+  dayType         DayType  @map("day_type")
+  countsAsStandard Boolean @default(true) @map("counts_as_standard")
+  note            String?
+  larkRecordId    String?  @map("lark_record_id")
+
+  @@map("work_calendars")
+}
+
+/// Lịch sử đồng bộ — Sync job tracking
+model SyncJob {
+  id               String        @id @default(uuid()) @db.Uuid
+  jobType          String        @map("job_type")
+  direction        SyncDirection
+  status           SyncStatus    @default(RUNNING)
+  startedAt        DateTime      @default(now()) @map("started_at")
+  finishedAt       DateTime?     @map("finished_at")
+  recordsProcessed Int           @default(0) @map("records_processed")
+  recordsCreated   Int           @default(0) @map("records_created")
+  recordsUpdated   Int           @default(0) @map("records_updated")
+  recordsFailed    Int           @default(0) @map("records_failed")
+  errorMessage     String?       @map("error_message")
+  metadata         Json?
+
+  @@map("sync_jobs")
+}
+
+/// Nhật ký thay đổi — Audit log for data changes
+model AuditLog {
+  id        BigInt      @id @default(autoincrement())
+  tableName String      @map("table_name")
+  recordId  String      @map("record_id")
+  action    AuditAction
+  oldData   Json?       @map("old_data")
+  newData   Json?       @map("new_data")
+  changedBy String?     @map("changed_by")
+  changedAt DateTime    @default(now()) @map("changed_at")
+
+  @@map("audit_logs")
+}
+
+/// Log quá trình đóng kỳ — Close process step tracking
+model CloseProcessLog {
+  id           String          @id @default(uuid()) @db.Uuid
+  periodId     String          @map("period_id") @db.Uuid
+  stepName     String          @map("step_name")
+  stepOrder    Int             @map("step_order")
+  status       CloseStepStatus @default(PENDING)
+  startedAt    DateTime?       @map("started_at")
+  finishedAt   DateTime?       @map("finished_at")
+  errorMessage String?         @map("error_message")
+  output       Json?
+
+  // Relations
+  period PayrollPeriod @relation(fields: [periodId], references: [id])
+
+  @@map("close_process_logs")
+}
+
+/// Policy Version — nhóm tất cả settings theo version
+/// Mỗi category (insurance, tax...) có nhiều versions, 1 ACTIVE tại 1 thời điểm
+model PolicyVersion {
+  id            String    @id @default(uuid()) @db.Uuid
+  category      String    // 'insurance', 'tax', 'benefit', 'general'
+  name          String    // "Chính sách BH 2025", "Cập nhật NĐ 74/2025"
+  version       Int       @default(1)
+  status        String    @default("ACTIVE") // 'ACTIVE', 'INACTIVE', 'DRAFT'
+  effectiveFrom DateTime  @map("effective_from")
+  effectiveTo   DateTime? @map("effective_to")
+  description   String?   // Ghi chú mô tả version
+  createdBy     String?   @map("created_by")
+
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  settings      PayrollSetting[]
+  changeLogs    SettingChangeLog[]
+
+  @@unique([category, version])
+  @@index([category, status])
+  @@map("policy_versions")
+}
+
+/// Cài đặt hệ thống — thuộc 1 PolicyVersion
+model PayrollSetting {
+  id              String    @id @default(uuid()) @db.Uuid
+  policyVersionId String    @map("policy_version_id") @db.Uuid
+  category        String    // 'insurance', 'tax', 'benefit', 'general'
+  key             String    // 'bhxh_employee_rate', etc.
+  value           String    // JSON-serialized value
+  label           String    // Display label
+  description     String?   // Help text
+  dataType        String    @default("number") @map("data_type")
+  sortOrder       Int       @default(0) @map("sort_order")
+
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  policyVersion   PolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([policyVersionId, key])
+  @@index([category, key])
+  @@map("payroll_settings")
+}
+
+/// Log thay đổi — gắn với PolicyVersion
+model SettingChangeLog {
+  id              String   @id @default(uuid()) @db.Uuid
+  policyVersionId String   @map("policy_version_id") @db.Uuid
+  category        String
+  action          String   @default("CREATE") // 'CREATE', 'UPDATE', 'ACTIVATE', 'DEACTIVATE'
+  summary         String   // "Tạo version mới", "Cập nhật BHXH 8%→9%"
+  details         String?  @db.Text // JSON chi tiết changes [{key, oldValue, newValue}]
+  changedBy       String?  @map("changed_by")
+  changedAt       DateTime @default(now()) @map("changed_at")
+
+  // Relations
+  policyVersion   PolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Cascade)
+
+  @@index([category])
+  @@index([changedAt])
+  @@map("setting_change_logs")
+}

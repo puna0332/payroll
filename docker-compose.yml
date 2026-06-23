@@ -1,0 +1,61 @@
+services:
+  api:
+    build:
+      context: ./packages/api
+      dockerfile: Dockerfile
+    container_name: asnova-payroll-api
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    environment:
+      - NODE_ENV=production
+      - PORT=3100
+      - DATABASE_URL=postgresql://asnova:${DB_PASSWORD}@postgres:5432/asnova_payroll
+    env_file:
+      - ./packages/api/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - asnova-net
+
+  web:
+    build:
+      context: ./packages/web
+      dockerfile: Dockerfile
+    container_name: asnova-payroll-web
+    restart: unless-stopped
+    ports:
+      - "3101:80"
+    depends_on:
+      - api
+    networks:
+      - asnova-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: asnova-payroll-db
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_DB=asnova_payroll
+      - POSTGRES_USER=asnova
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-asnova_secret}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asnova -d asnova_payroll"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - asnova-net
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  asnova-net:
+    driver: bridge
